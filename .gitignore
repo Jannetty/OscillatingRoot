@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Environments
+.venv/
+.python-version
+
+# Testing
+.pytest_cache/
+
+# Outputs
+runs/
+*.npz
+*.zarr
+*.mp4
+*.png
+
+# OS
+.DS_Store
