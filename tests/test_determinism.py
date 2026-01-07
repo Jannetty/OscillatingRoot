@@ -23,4 +23,6 @@ def test_determinism_same_seed_same_final_state():
     assert np.allclose(s1.y, s2.y)
     assert np.allclose(s1.A_L, s2.A_L)
     assert np.allclose(s1.A_R, s2.A_R)
+    assert np.array_equal(s1.ids, s2.ids)
+    assert s1.next_id == s2.next_id
     assert abs(s1.t - s2.t) < 1e-12

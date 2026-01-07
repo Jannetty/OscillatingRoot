@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -62,7 +62,7 @@ def plot_kymograph(
 
 
 def plot_final_state(
-    x: np.ndarray,
+    y: np.ndarray,
     A_L_final: np.ndarray,
     A_R_final: np.ndarray,
     outpath: str | Path,
@@ -73,29 +73,162 @@ def plot_final_state(
 
     Parameters
     ----------
-    x : np.ndarray shape (n_cells,)
+    y : np.ndarray shape (n_cells,)
     A_L_final : np.ndarray shape (n_cells,)
     A_R_final : np.ndarray shape (n_cells,)
     """
     outpath = Path(outpath)
     outpath.parent.mkdir(parents=True, exist_ok=True)
 
-    if x.ndim != 1 or A_L_final.ndim != 1 or A_R_final.ndim != 1:
+    if y.ndim != 1 or A_L_final.ndim != 1 or A_R_final.ndim != 1:
         raise ValueError("x, A_L_final, A_R_final must all be 1D arrays")
-    if not (x.shape == A_L_final.shape == A_R_final.shape):
+    if not (y.shape == A_L_final.shape == A_R_final.shape):
         raise ValueError(
-            f"Shapes must match. Got x={x.shape}, A_L={A_L_final.shape}, A_R={A_R_final.shape}"
+            f"Shapes must match. Got x={y.shape}, A_L={A_L_final.shape}, A_R={A_R_final.shape}"
         )
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax.plot(x, A_L_final, label="A_L")
-    ax.plot(x, A_R_final, label="A_R")
+    ax.plot(y, A_L_final, label="A_L")
+    ax.plot(y, A_R_final, label="A_R")
     ax.set_title(title)
     ax.set_xlabel("position x")
     ax.set_ylabel("auxin")
     ax.legend()
 
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=200)
+    plt.close(fig)
+    return outpath
+
+def plot_id_trajectories(
+    t: np.ndarray,
+    y: np.ndarray,
+    ids: np.ndarray,
+    outpath: str | Path,
+    n_tracks: int = 12,
+    seed: int = 0,
+    title: str = "Tracked cell trajectories (by ID)",
+) -> Path:
+    """
+    Plot y(t) for a subset of persistent cell IDs.
+
+    Parameters
+    ----------
+    t : (n_frames,)
+    y : (n_frames, n_cells)
+    ids : (n_frames, n_cells)
+    n_tracks : number of IDs to track
+    seed : random seed for choosing which IDs to track (deterministic selection)
+    """
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    if t.ndim != 1:
+        raise ValueError(f"t must be 1D, got {t.shape}")
+    if y.ndim != 2 or ids.ndim != 2:
+        raise ValueError("y and ids must be 2D (n_frames, n_cells)")
+    if y.shape != ids.shape:
+        raise ValueError(f"y and ids must have same shape, got {y.shape} vs {ids.shape}")
+    if y.shape[0] != t.shape[0]:
+        raise ValueError("t length must match number of frames")
+
+    # Choose IDs to track from the final frame (these exist at the end)
+    final_ids = np.sort(ids[-1].astype(np.int64))
+    track_ids = final_ids[:n_tracks]          # oldest remaining
+    # or:
+    #track_ids = final_ids[-n_tracks:]         # youngest remaining
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    for cid in track_ids:
+        # For each frame, find the index where this ID appears (or NaN if absent)
+        y_trace = np.full(t.shape[0], np.nan, dtype=float)
+        for k in range(t.shape[0]):
+            match = np.where(ids[k] == cid)[0]
+            if match.size > 0:
+                y_trace[k] = y[k, match[0]]
+        ax.plot(t, y_trace, label=f"id {int(cid)}")
+
+    ax.set_title(title)
+    ax.set_xlabel("time")
+    ax.set_ylabel("y position")
+    ax.legend(fontsize=7, ncol=2, frameon=False)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=200)
+    plt.close(fig)
+    return outpath
+
+
+def compute_oz_residence_times(
+    t: np.ndarray,
+    y: np.ndarray,
+    ids: np.ndarray,
+    oz_center: float,
+    oz_sigma: float,
+) -> np.ndarray:
+    """
+    Compute residence time in a simple OZ window [center - sigma, center + sigma]
+    for each cell ID that appears in the frames.
+
+    Returns
+    -------
+    residence_times : (n_ids_included,) array of residence durations [same units as t]
+        Only includes IDs that both enter and exit the OZ window within the saved frames.
+    """
+    if oz_sigma <= 0:
+        return np.array([], dtype=float)
+
+    in_oz = (y >= (oz_center - oz_sigma)) & (y <= (oz_center + oz_sigma))
+
+    all_ids = np.unique(ids.astype(np.int64))
+    residence = []
+
+    for cid in all_ids:
+        # bool time-series of whether cid is in OZ at each frame
+        in_series = np.zeros(t.shape[0], dtype=bool)
+        for k in range(t.shape[0]):
+            match = np.where(ids[k] == cid)[0]
+            if match.size > 0:
+                in_series[k] = bool(in_oz[k, match[0]])
+
+        if not np.any(in_series):
+            continue
+
+        # Find first and last True index
+        first = np.argmax(in_series)
+        last = len(in_series) - 1 - np.argmax(in_series[::-1])
+
+        # Require that it actually exits within the saved window:
+        # i.e., there is at least one False after last True
+        if last < (len(in_series) - 1) and not in_series[last + 1]:
+            residence.append(t[last] - t[first])
+
+    return np.asarray(residence, dtype=float)
+
+
+def plot_residence_histogram(
+    residence_times: np.ndarray,
+    outpath: str | Path,
+    title: str = "OZ residence time histogram",
+) -> Path:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    if residence_times.size == 0:
+        ax.text(0.5, 0.5, "No residence times computed\n(set oz_sigma > 0 and run long enough)",
+                ha="center", va="center")
+        ax.set_axis_off()
+    else:
+        ax.hist(residence_times, bins=30)
+        ax.set_xlabel("residence time")
+        ax.set_ylabel("count")
+
+    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(outpath, dpi=200)
     plt.close(fig)

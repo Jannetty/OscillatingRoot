@@ -13,7 +13,13 @@ from oscillating_root.state import init_state
 from oscillating_root.model import step
 from oscillating_root.io import make_run_dir, save_frames_npz, save_metrics_json, save_params_json
 from oscillating_root.metrics import compute_basic_metrics
-from oscillating_root.viz import plot_kymograph, plot_final_state
+from oscillating_root.viz import (
+    plot_kymograph,
+    plot_final_state,
+    plot_id_trajectories,
+    compute_oz_residence_times,
+    plot_residence_histogram,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,13 +54,15 @@ def main() -> None:
 
     save_every = max(1, int(args.save_every))
     times = []
-    xs = []
+    ys = []
+    ids_list = []
     A_Ls = []
     A_Rs = []
 
     # Record initial frame (frame 0)
     times.append(state.t)
-    xs.append(state.y.copy())
+    ys.append(state.y.copy())
+    ids_list.append(state.ids.copy())
     A_Ls.append(state.A_L.copy())
     A_Rs.append(state.A_R.copy())
 
@@ -63,7 +71,8 @@ def main() -> None:
 
         if state.step_idx % save_every == 0:
             times.append(state.t)
-            xs.append(state.y.copy())
+            ys.append(state.y.copy())
+            ids_list.append(state.ids.copy())
             A_Ls.append(state.A_L.copy())
             A_Rs.append(state.A_R.copy())
 
@@ -71,9 +80,10 @@ def main() -> None:
 
     frames = {
         "t": np.asarray(times, dtype=float),
-        "x": np.stack(xs, axis=0),      # (n_frames, n_cells)
-        "A_L": np.stack(A_Ls, axis=0),  # (n_frames, n_cells)
-        "A_R": np.stack(A_Rs, axis=0),  # (n_frames, n_cells)
+        "y": np.stack(ys, axis=0),          # (n_frames, n_cells)
+        "ids": np.stack(ids_list, axis=0),  # (n_frames, n_cells)
+        "A_L": np.stack(A_Ls, axis=0),
+        "A_R": np.stack(A_Rs, axis=0),
     }
 
     # 4) Compute metrics
@@ -91,11 +101,31 @@ def main() -> None:
     plot_kymograph(frames["A_L"], run_dir / "kymograph_A_L.png", title="Auxin (Left file)", t=frames["t"])
     plot_kymograph(frames["A_R"], run_dir / "kymograph_A_R.png", title="Auxin (Right file)", t=frames["t"])
     plot_final_state(
-        x=frames["x"][-1],
+        y=frames["y"][-1],
         A_L_final=frames["A_L"][-1],
         A_R_final=frames["A_R"][-1],
         outpath=run_dir / "final_auxin_profile.png",
     )
+
+    # Evidence plots for Milestone 1
+    plot_id_trajectories(
+        t=frames["t"],
+        y=frames["y"],
+        ids=frames["ids"],
+        outpath=run_dir / "trajectories.png",
+        n_tracks=12,
+        seed=p.seed,
+    )
+
+    # OZ residence time histogram (only meaningful if oz_sigma > 0)
+    res = compute_oz_residence_times(
+        t=frames["t"],
+        y=frames["y"],
+        ids=frames["ids"],
+        oz_center=p.oz_center,
+        oz_sigma=p.oz_sigma,
+    )
+    plot_residence_histogram(res, run_dir / "oz_residence_hist.png")
 
     # 6) Print run directory
     print(f"Run complete: {run_dir}")

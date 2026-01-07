@@ -12,14 +12,14 @@ Conventions / units:
 - AU = arbitrary auxin amount unit
 
 Coordinate system:
-- x = 0 corresponds to the root tip
-- x increases shootward
-- all per-cell variables are indexed in increasing x order
+- y = 0 corresponds to the root tip
+- y increases shootward (up the screen)
+- all per-cell arrays are indexed in increasing y order
 """
 
 # ---- Unit conventions (documentation constants) ----
-TU: str = "model time unit"        # later mapped to minutes or hours
-LU: str = "model length unit"      # later mapped to microns
+TU: str = "model time unit"        # later map to minutes or hours
+LU: str = "model length unit"      # later map to microns
 AU: str = "auxin amount unit"      # arbitrary auxin amount per cell
 
 
@@ -31,11 +31,17 @@ class Params:
     n_steps: int = 100     # number of simulation steps to run [dimensionless]
     n_cells: int = 8       # number of cells per file (left or right) [cells]
 
-    # ---- Placeholders for upcoming milestones (not used yet) ----
-    oz_center: float = 0.0  # center of oscillation zone along x [LU]
-    oz_sigma: float = 0.0   # width/scale of OZ window (e.g., Gaussian sigma or half-width) [LU]
+    # --- Conveyor belt ---
+    insert_spacing: float = 1.0   # nominal newborn spacing near tip [LU]
+    y_max: float = 300.0          # far boundary (optional physical cutoff) [LU]
 
-    period_T: float = 0.0   # oscillation period of the tip-tethered forcing S(t) [TU]
+    v: float = 1.0                # advection speed tip [LU/TU]
+
+    # ---- Placeholders for upcoming milestones (not used yet) ----
+    oz_center: float = 0.0  # center of oscillation zone along y [LU]
+    oz_sigma: float = 0.0   # width/scale of OZ window [LU]
+
+    period_T: float = 0.0   # oscillation period of forcing S(t) [TU]
     S0: float = 0.0         # baseline forcing amplitude [AU/TU] or [dimensionless]
     S1: float = 0.0         # oscillatory forcing amplitude [AU/TU] or [dimensionless]
 
@@ -54,6 +60,14 @@ class Params:
         if self.seed < 0:
             raise ValueError(f"seed must be >= 0, got {self.seed}")
 
+        # Conveyor belt sanity
+        if self.insert_spacing <= 0:
+            raise ValueError(f"insert_spacing must be > 0, got {self.insert_spacing}")
+        if self.y_max <= self.insert_spacing:
+            raise ValueError(f"y_max must be > insert_spacing, got y_max={self.y_max}")
+        if self.v <= 0:
+            raise ValueError(f"v must be > 0, got {self.v}")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize parameters to a JSON-friendly dict."""
         return asdict(self)
@@ -66,7 +80,12 @@ def default_params() -> Params:
         dt=0.1,
         n_steps=400,
         n_cells=250,
-        # placeholders are zero for now
+        insert_spacing=1.0,
+        y_max=300.0,
+        v=1.0,
+        # placeholders remain zero for now
+        oz_center = 100.0,
+        oz_sigma = 10.0
     )
     p.validate()
     return p
