@@ -28,6 +28,9 @@ class State:
     ids: NDArray[np.int64]  # persistent unique IDs, shape (n_cells,) [dimensionless]
     next_id: int            # next unused ID for newborn cells [dimensionless]
 
+    L: NDArray[np.float64]          # cell length, shape (n_cells,) [LU]
+    tip_buffer: float              # accumulated length at tip not yet converted to a new cell [LU]
+
     step_idx: int = 0  # integer step counter (0 at init) [dimensionless]
 
 
@@ -44,14 +47,18 @@ def init_state(p: Params) -> State:
     p.validate()
 
     n = p.n_cells
-    y = p.insert_spacing * np.arange(n, dtype=np.float64)
+    L = np.full(n, p.newborn_length, dtype=np.float64)
+    # centers from edges:
+    edges = np.concatenate(([0.0], np.cumsum(L)))
+    y = 0.5 * (edges[:-1] + edges[1:])
+
     A_L = np.zeros(n, dtype=np.float64)
     A_R = np.zeros(n, dtype=np.float64)
 
     ids = np.arange(n, dtype=np.int64)
     next_id = int(n)
 
-    s = State(t=0.0, y=y, A_L=A_L, A_R=A_R, ids=ids, next_id=next_id, step_idx=0)
+    s = State(t=0.0, y=y, L=L, A_L=A_L, A_R=A_R, ids=ids, next_id=next_id, tip_buffer=0.0, step_idx=0)
     validate_state(s, p)
     return s
 
@@ -72,6 +79,8 @@ def validate_state(state: State, p: Params) -> None:
         raise ValueError(f"A_R must have shape {(n,)}, got {state.A_R.shape}")
     if state.ids.shape != (n,):
         raise ValueError(f"ids must have shape {(n,)}, got {state.ids.shape}")
+    if state.L.shape != (n,):
+        raise ValueError(f"L must have shape {(n,)}, got {state.L.shape}")
 
     # Dtype / numeric sanity
     if not np.issubdtype(state.y.dtype, np.floating):
@@ -92,6 +101,10 @@ def validate_state(state: State, p: Params) -> None:
         raise ValueError("A_L contains NaN or inf")
     if not np.isfinite(state.A_R).all():
         raise ValueError("A_R contains NaN or inf")
+    if not np.isfinite(state.L).all():
+        raise ValueError("L contains NaN or inf")
+    if not np.isfinite(state.tip_buffer):
+        raise ValueError("tip_buffer must be finite")
 
     # Ordering invariant (important for neighbor coupling later)
     if not np.all(np.diff(state.y) >= 0):
@@ -110,3 +123,11 @@ def validate_state(state: State, p: Params) -> None:
     # Step index sanity
     if state.step_idx < 0:
         raise ValueError(f"step_idx must be >= 0, got {state.step_idx}")
+
+    # Length sanity
+    if np.any(state.L <= 0):
+        raise ValueError("All L must be > 0")
+
+    # Tip buffer sanity
+    if state.tip_buffer < 0:
+        raise ValueError("tip_buffer must be >= 0")

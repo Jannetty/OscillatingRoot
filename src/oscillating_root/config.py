@@ -31,23 +31,23 @@ class Params:
     n_steps: int = 100     # number of simulation steps to run [dimensionless]
     n_cells: int = 8       # number of cells per file (left or right) [cells]
 
-    # --- Conveyor belt ---
-    insert_spacing: float = 1.0   # nominal newborn spacing near tip [LU]
-    y_max: float = 300.0          # far boundary (optional physical cutoff) [LU]
+    # ---- OZ ----
+    oz_center: float = 50.0  # center of oscillation zone along y [LU]
+    oz_sigma: float = 10.0   # width/scale of OZ window [LU]
 
-    v: float = 1.0                # advection speed tip [LU/TU]
+    period_T: float = 10.0   # oscillation period of forcing S(t) [TU]
+    S0: float = 1.0         # baseline forcing amplitude [AU/TU] or [dimensionless]
+    S1: float = 1.0         # oscillatory forcing amplitude [AU/TU] or [dimensionless]
 
-    # ---- Placeholders for upcoming milestones (not used yet) ----
-    oz_center: float = 0.0  # center of oscillation zone along y [LU]
-    oz_sigma: float = 0.0   # width/scale of OZ window [LU]
-
-    period_T: float = 0.0   # oscillation period of forcing S(t) [TU]
-    S0: float = 0.0         # baseline forcing amplitude [AU/TU] or [dimensionless]
-    S1: float = 0.0         # oscillatory forcing amplitude [AU/TU] or [dimensionless]
-
-    k_in: float = 0.0       # auxin input/import rate constant [1/TU]
-    d: float = 0.0          # auxin decay/degradation rate [1/TU]
+    # ---- Auxin ----
+    k_in: float = 1.0       # auxin input/import rate constant [1/TU]
+    d: float = 0.5          # auxin decay/degradation rate [1/TU]
     D: float = 0.0          # diffusion coefficient along the file [LU^2/TU]
+
+    # --- Growth (new) ---
+    growth_rate: float = 0.0          # dL/dt for each cell [LU/TU] (constant elongation per cell)
+    newborn_length: float = 1.0        # length assigned to newborn cells [LU]
+    tip_length_accum_rate: float = 1.0 # how fast new length is added at the tip [LU/TU]
 
     def validate(self) -> None:
         """Raise ValueError if parameters are invalid."""
@@ -60,13 +60,25 @@ class Params:
         if self.seed < 0:
             raise ValueError(f"seed must be >= 0, got {self.seed}")
 
-        # Conveyor belt sanity
-        if self.insert_spacing <= 0:
-            raise ValueError(f"insert_spacing must be > 0, got {self.insert_spacing}")
-        if self.y_max <= self.insert_spacing:
-            raise ValueError(f"y_max must be > insert_spacing, got y_max={self.y_max}")
-        if self.v <= 0:
-            raise ValueError(f"v must be > 0, got {self.v}")
+        # Growth sanity
+        if self.newborn_length <= 0:
+            raise ValueError("newborn_length must be > 0")
+        if self.growth_rate < 0:
+            raise ValueError("growth_rate must be >= 0")
+        if self.tip_length_accum_rate < 0:
+            raise ValueError("tip_length_accum_rate must be >= 0")
+
+        # If you rely on births to maintain a steady “conveyor”, you generally need some tip input
+        if self.tip_length_accum_rate == 0 and self.growth_rate == 0:
+            raise ValueError("No growth: tip_length_accum_rate and growth_rate are both 0")
+
+        # Prevent pathological "tons of births per step" (optional but useful)
+        tip_added = self.tip_length_accum_rate * self.dt
+        if tip_added > 5 * self.newborn_length:
+            raise ValueError(
+                f"tip adds {tip_added:.3g} per step, which is >5 newborn lengths; "
+                "this will spawn many cells per step and may be unstable."
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize parameters to a JSON-friendly dict."""
@@ -80,12 +92,11 @@ def default_params() -> Params:
         dt=0.1,
         n_steps=400,
         n_cells=250,
-        insert_spacing=1.0,
-        y_max=300.0,
-        v=1.0,
-        # placeholders remain zero for now
-        oz_center = 100.0,
-        oz_sigma = 10.0
+        oz_center = 50.0,
+        oz_sigma = 10.0,
+        newborn_length=1.0,
+        growth_rate=0.0,
+        tip_length_accum_rate=0.2,
     )
     p.validate()
     return p

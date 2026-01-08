@@ -5,7 +5,143 @@ from typing import Iterable, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.collections import PatchCollection
 
+
+def plot_cell_kymograph_eulerian_raster(
+    t: np.ndarray,
+    y_centers: np.ndarray,
+    A: np.ndarray,
+    outpath: str | Path,
+    *,
+    cell_lengths: Optional[np.ndarray] = None,
+    default_cell_length: float = 1.0,
+    y_max: Optional[float] = None,
+    dy: float = 1.0,  # y grid resolution [LU per pixel row]
+    title: str = "Auxin kymograph (fixed y, rasterized cells)",
+    cmap: str = "viridis",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+) -> Path:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    if t.ndim != 1:
+        raise ValueError(f"t must be 1D, got {t.shape}")
+    if y_centers.ndim != 2 or A.ndim != 2:
+        raise ValueError("y_centers and A must be 2D (n_frames, n_cells)")
+    if y_centers.shape != A.shape:
+        raise ValueError(f"y_centers and A must match, got {y_centers.shape} vs {A.shape}")
+    if y_centers.shape[0] != t.shape[0]:
+        raise ValueError("t length must match number of frames")
+
+    n_frames, n_cells = A.shape
+
+    if cell_lengths is None:
+        L = np.full_like(y_centers, float(default_cell_length), dtype=float)
+    else:
+        if cell_lengths.shape != y_centers.shape:
+            raise ValueError(f"cell_lengths must match y_centers shape, got {cell_lengths.shape}")
+        L = cell_lengths.astype(float)
+
+    if y_max is None:
+        y_max = float(np.nanmax(y_centers + 0.5 * L))
+    if vmin is None:
+        vmin = float(np.nanmin(A))
+    if vmax is None:
+        vmax = float(np.nanmax(A))
+
+    # Build fixed Eulerian y grid
+    n_y = int(np.ceil(y_max / dy)) + 1
+    img = np.zeros((n_y, n_frames), dtype=float)
+
+    # Paint cells into img[:, k]
+    for k in range(n_frames):
+        for i in range(n_cells):
+            yc = float(y_centers[k, i])
+            li = float(L[k, i])
+            if not np.isfinite(yc) or not np.isfinite(li):
+                continue
+            y0 = yc - 0.5 * li
+            y1 = yc + 0.5 * li
+            if y1 <= 0 or y0 >= y_max:
+                continue
+            y0c = max(0.0, y0)
+            y1c = min(y_max, y1)
+
+            j0 = int(np.floor(y0c / dy))
+            j1 = int(np.ceil(y1c / dy))
+            if j1 <= j0:
+                continue
+
+            img[j0:j1, k] = float(A[k, i])
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    extent = [float(t[0]), float(t[-1]), 0.0, float(y_max)]
+    im = ax.imshow(
+        img,
+        origin="lower",
+        aspect="auto",
+        extent=extent,
+        vmin=vmin,
+        vmax=vmax,
+        cmap=cmap,
+        interpolation="nearest",  # avoid smoothing artifacts
+    )
+
+    ax.set_xlabel("time [TU]")
+    ax.set_ylabel("y position [LU] (root tip at 0)")
+    ax.set_title(title)
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("auxin [AU]")
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=200)
+    plt.close(fig)
+    return outpath
+
+def plot_cell_stack_snapshot(
+    y_centers: np.ndarray,
+    L: np.ndarray,
+    outpath: str | Path,
+    *,
+    title: str = "Cell stack snapshot",
+    y_max: float | None = None,
+) -> Path:
+    outpath = Path(outpath)
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    if y_centers.ndim != 1 or L.ndim != 1 or y_centers.shape != L.shape:
+        raise ValueError("Expected y_centers and L as 1D arrays of same shape.")
+
+    edges_bottom = y_centers - 0.5 * L
+    edges_top = y_centers + 0.5 * L
+
+    if y_max is None:
+        y_max = float(np.max(edges_top))
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+
+    # draw edges
+    for b, t in zip(edges_bottom, edges_top):
+        if t < 0 or b > y_max:
+            continue
+        ax.hlines([b, t], xmin=0, xmax=1, linewidth=1)
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, y_max)
+    ax.set_xticks([])
+    ax.set_ylabel("y [LU]")
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=200)
+    plt.close(fig)
+    return outpath
 
 def plot_kymograph(
     A: np.ndarray,
@@ -92,8 +228,8 @@ def plot_final_state(
     ax.plot(y, A_L_final, label="A_L")
     ax.plot(y, A_R_final, label="A_R")
     ax.set_title(title)
-    ax.set_xlabel("position x")
-    ax.set_ylabel("auxin")
+    ax.set_xlabel("y position [LU]")
+    ax.set_ylabel("auxin [AU]")
     ax.legend()
 
     fig.tight_layout()

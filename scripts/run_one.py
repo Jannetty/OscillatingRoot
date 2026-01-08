@@ -19,6 +19,8 @@ from oscillating_root.viz import (
     plot_id_trajectories,
     compute_oz_residence_times,
     plot_residence_histogram,
+    plot_cell_kymograph_eulerian_raster,
+    plot_cell_stack_snapshot
 )
 
 
@@ -58,6 +60,7 @@ def main() -> None:
     ids_list = []
     A_Ls = []
     A_Rs = []
+    Ls = []
 
     # Record initial frame (frame 0)
     times.append(state.t)
@@ -65,6 +68,7 @@ def main() -> None:
     ids_list.append(state.ids.copy())
     A_Ls.append(state.A_L.copy())
     A_Rs.append(state.A_R.copy())
+    Ls.append(state.L.copy())
 
     for _ in range(p.n_steps):
         state = step(state, p)
@@ -75,12 +79,14 @@ def main() -> None:
             ids_list.append(state.ids.copy())
             A_Ls.append(state.A_L.copy())
             A_Rs.append(state.A_R.copy())
+            Ls.append(state.L.copy())
 
     runtime_s = time.time() - t0
 
     frames = {
         "t": np.asarray(times, dtype=float),
         "y": np.stack(ys, axis=0),          # (n_frames, n_cells)
+        "L": np.stack(Ls, axis=0),
         "ids": np.stack(ids_list, axis=0),  # (n_frames, n_cells)
         "A_L": np.stack(A_Ls, axis=0),
         "A_R": np.stack(A_Rs, axis=0),
@@ -98,8 +104,27 @@ def main() -> None:
     save_metrics_json(run_dir, metrics)
 
     # Plots
-    plot_kymograph(frames["A_L"], run_dir / "kymograph_A_L.png", title="Auxin (Left file)", t=frames["t"])
-    plot_kymograph(frames["A_R"], run_dir / "kymograph_A_R.png", title="Auxin (Right file)", t=frames["t"])
+    #plot_kymograph(frames["A_L"], run_dir / "kymograph_A_L.png", title="Auxin (Left file)", t=frames["t"])
+    #plot_kymograph(frames["A_R"], run_dir / "kymograph_A_R.png", title="Auxin (Right file)", t=frames["t"])
+    plot_cell_kymograph_eulerian_raster(
+        t=frames["t"],
+        y_centers=frames["y"],
+        A=frames["A_L"],
+        cell_lengths=frames["L"],
+        outpath=run_dir / "kymograph_cells_A_L.png",
+        dy=1.0,
+        title="Auxin (Left file) — fixed y, cell rectangles",
+    )
+
+    plot_cell_kymograph_eulerian_raster(
+        t=frames["t"],
+        y_centers=frames["y"],
+        A=frames["A_R"],
+        cell_lengths=frames["L"],
+        outpath=run_dir / "kymograph_cells_A_R.png",
+        dy=1.0,
+        title="Auxin (Right file) — fixed y, cell rectangles",
+    )
     plot_final_state(
         y=frames["y"][-1],
         A_L_final=frames["A_L"][-1],
@@ -130,6 +155,14 @@ def main() -> None:
     # 6) Print run directory
     print(f"Run complete: {run_dir}")
     print(f"Artifacts: params.json, frames.npz, metrics.json, kymographs, final plot")
+
+    plot_cell_stack_snapshot(
+        frames["y"][-1],
+        frames["L"][-1],
+        run_dir / "cell_stack_final.png",
+        y_max=120.0,
+        title="Cell boundaries near tip (final frame)",
+    )
 
 
 if __name__ == "__main__":

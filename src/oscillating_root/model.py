@@ -14,35 +14,44 @@ Core simulation update rule.
 - Truncation at far end to keep a fixed number of cells (n_cells).
 """
 
+def _recompute_centers_from_lengths(L: np.ndarray, tip_buffer: float) -> np.ndarray:
+    """Given lengths and a tip offset (buffer), return cell center positions y [LU]."""
+    edges = tip_buffer + np.concatenate(([0.0], np.cumsum(L)))
+    return 0.5 * (edges[:-1] + edges[1:])
 
-def v_of_y(y: np.ndarray, p: Params) -> np.ndarray:
-    """
-    Advection speed field v(y).
+def W_of_y(y: np.ndarray, p: Params) -> np.ndarray:
+    """OZ window function W(y). For Milestone 2: simple box window in [center-sigma, center+sigma]."""
+    if p.oz_sigma <= 0:
+        return np.zeros_like(y, dtype=np.float64)
+    return ((y >= (p.oz_center - p.oz_sigma)) & (y <= (p.oz_center + p.oz_sigma))).astype(np.float64)
 
-    Constant.
-    """
-    return p.v
+def S_of_t(t: float, p: Params) -> float:
+    """Tip-tethered oscillatory driver S(t)."""
+    if p.period_T <= 0:
+        return float(p.S0)
+    return float(p.S0 + p.S1 * np.sin(2.0 * np.pi * t / p.period_T))
 
 
 def _insert_one_cell_at_tip(state: State, p: Params) -> State:
-    """
-    Insert one newborn cell at the tip (y ~ 0), prepend arrays, assign a new unique ID.
-    """
-    new_y0 = 0.0
     new_id = np.int64(state.next_id)
 
-    y = np.concatenate(([new_y0], state.y))
+    L = np.concatenate(([p.newborn_length], state.L))
     A_L = np.concatenate(([0.0], state.A_L))
     A_R = np.concatenate(([0.0], state.A_R))
     ids = np.concatenate(([new_id], state.ids))
 
+    # placeholder y with correct shape; will be recomputed immediately after insertion loop
+    y_placeholder = np.zeros_like(L, dtype=np.float64)
+
     return State(
         t=state.t,
-        y=y,
+        y=y_placeholder,
+        L=L,
         A_L=A_L,
         A_R=A_R,
         ids=ids,
         next_id=state.next_id + 1,
+        tip_buffer=state.tip_buffer,
         step_idx=state.step_idx,
     )
 
@@ -56,77 +65,103 @@ def _truncate_to_n_cells(state: State, p: Params) -> State:
     return State(
         t=state.t,
         y=state.y[:n],
+        L=state.L[:n],
         A_L=state.A_L[:n],
         A_R=state.A_R[:n],
         ids=state.ids[:n],
         next_id=state.next_id,
+        tip_buffer=state.tip_buffer,
         step_idx=state.step_idx,
     )
 
 
 def step(state: State, p: Params) -> State:
     """
-    Advance the simulation by one timestep.
+    Growth-driven conveyor belt step.
 
-    Milestone 1 behavior:
-    1) advect all cell positions: y += v(y)*dt
-    2) insert newborn cells at tip while there's "room" (y[0] >= insert_spacing)
-    3) truncate to keep exactly n_cells
-    4) advance time and step_idx
-
-    Notes:
-    - Auxin arrays A_L/A_R remain unchanged in Milestone 1.
-    - Deterministic given (state, p).
+    1) grow each cell length:        L_i += growth_rate * dt
+    2) accumulate new material at tip: tip_buffer += tip_length_accum_rate * dt
+    3) while tip_buffer >= newborn_length: insert a newborn (prepend) and subtract newborn_length
+    4) recompute y centers from cumulative lengths + tip_buffer
+    5) truncate to exactly n_cells
+    6) update auxin with OZ forcing (uses updated y)
+    7) advance time and step_idx
     """
     p.validate()
     validate_state(state, p)
 
-    # 1) Advect
-    y_new = state.y + v_of_y(state.y, p) * p.dt
+    t_next = state.t + p.dt
 
-    advected = State(
-        t=state.t,  # update time at end
-        y=y_new,
+    # --- 1) grow lengths ---
+    L_new = state.L + p.growth_rate * p.dt
+
+    # --- 2) accumulate tip material ---
+    tip_buffer_new = state.tip_buffer + p.tip_length_accum_rate * p.dt
+
+    grown = State(
+        t=state.t,  # time updated at end
+        y=state.y,  # placeholder; will be recomputed
+        L=L_new,
         A_L=state.A_L,
         A_R=state.A_R,
         ids=state.ids,
         next_id=state.next_id,
+        tip_buffer=tip_buffer_new,
         step_idx=state.step_idx,
     )
 
-    # 2) Insert at tip while first cell has moved beyond insert_spacing
-    # (growth-ready: later you can replace insert_spacing with a function of L)
-    inserted = advected
-    while inserted.y[0] >= p.insert_spacing:
+    # --- 3) insert newborns as long as enough tip material exists ---
+    inserted = grown
+    while inserted.tip_buffer >= p.newborn_length:
+        # subtract material used to create one newborn
+        inserted = State(
+            t=inserted.t,
+            y=inserted.y,
+            L=inserted.L,
+            A_L=inserted.A_L,
+            A_R=inserted.A_R,
+            ids=inserted.ids,
+            next_id=inserted.next_id,
+            tip_buffer=inserted.tip_buffer - p.newborn_length,
+            step_idx=inserted.step_idx,
+        )
         inserted = _insert_one_cell_at_tip(inserted, p)
 
-    # Optional physical cutoff: drop cells beyond y_max before truncation
-    # (Not strictly needed if you always truncate to n_cells, but harmless.)
-    if inserted.y.size > 0:
-        keep = inserted.y <= p.y_max
-        if not np.all(keep):
-            inserted = State(
-                t=inserted.t,
-                y=inserted.y[keep],
-                A_L=inserted.A_L[keep],
-                A_R=inserted.A_R[keep],
-                ids=inserted.ids[keep],
-                next_id=inserted.next_id,
-                step_idx=inserted.step_idx,
-            )
+    # --- 4) recompute y from lengths + tip buffer ---
+    y_new = _recompute_centers_from_lengths(inserted.L, inserted.tip_buffer)
+    repositioned = State(
+        t=inserted.t,
+        y=y_new,
+        L=inserted.L,
+        A_L=inserted.A_L,
+        A_R=inserted.A_R,
+        ids=inserted.ids,
+        next_id=inserted.next_id,
+        tip_buffer=inserted.tip_buffer,
+        step_idx=inserted.step_idx,
+    )
 
-    # 3) Truncate back to fixed n_cells (if we removed too many, this would be a problem;
-    # for now, parameters should avoid that).
-    truncated = _truncate_to_n_cells(inserted, p)
+    # --- 5) truncate back to fixed n_cells ---
+    truncated = _truncate_to_n_cells(repositioned, p)
 
-    # 4) Advance time and step index
+    # --- 6) OZ forcing + auxin update (uses updated y) ---
+    W = W_of_y(truncated.y, p)       # (n_cells,)
+    S = S_of_t(t_next, p)            # scalar
+    I = W * S                        # (n_cells,)
+
+    A_L_new = truncated.A_L + p.dt * (p.k_in * I - p.d * truncated.A_L)
+    A_R_new = truncated.A_R + p.dt * (p.k_in * I - p.d * truncated.A_R)
+
+    # --- 7) advance time and step index ---
     new_state = State(
-        t=state.t + p.dt,
+        t=t_next,
         y=truncated.y,
-        A_L=truncated.A_L,
-        A_R=truncated.A_R,
+        L=truncated.L,
+        A_L=A_L_new,
+        A_R=A_R_new,
         ids=truncated.ids,
         next_id=truncated.next_id,
+        tip_buffer=truncated.tip_buffer,
         step_idx=state.step_idx + 1,
     )
 
