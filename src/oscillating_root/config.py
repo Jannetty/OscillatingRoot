@@ -18,36 +18,57 @@ Coordinate system:
 """
 
 # ---- Unit conventions (documentation constants) ----
-TU: str = "model time unit"        # later map to minutes or hours
-LU: str = "model length unit"      # later map to microns
-AU: str = "auxin amount unit"      # arbitrary auxin amount per cell
+TU: str = "model time unit"  # later map to minutes or hours
+LU: str = "model length unit"  # later map to microns
+AU: str = "auxin amount unit"  # arbitrary auxin amount per cell
 
 
 @dataclass(frozen=True, slots=True)
 class Params:
     # --- Core run control ---
-    seed: int = 0          # RNG seed for reproducibility [dimensionless]
-    dt: float = 0.1        # timestep size [TU]
-    n_steps: int = 100     # number of simulation steps to run [dimensionless]
-    n_cells: int = 8       # number of cells per file (left or right) [cells]
+    seed: int = 0  # RNG seed for reproducibility [dimensionless]
+    dt: float = 0.1  # timestep size [TU]
+    n_steps: int = 100  # number of simulation steps to run [dimensionless]
+    n_cells: int = 8  # number of cells per file (left or right) [cells]
 
     # ---- OZ ----
     oz_center: float = 50.0  # center of oscillation zone along y [LU]
-    oz_sigma: float = 10.0   # width/scale of OZ window [LU]
+    oz_sigma: float = 10.0  # width/scale of OZ window [LU]
 
-    period_T: float = 10.0   # oscillation period of forcing S(t) [TU]
-    S0: float = 1.0         # baseline forcing amplitude [AU/TU] or [dimensionless]
-    S1: float = 1.0         # oscillatory forcing amplitude [AU/TU] or [dimensionless]
+    period_T: float = 10.0  # oscillation period of forcing S(t) [TU]
+    S0: float = 1.0  # baseline forcing amplitude [AU/TU] or [dimensionless]
+    S1: float = 1.0  # oscillatory forcing amplitude [AU/TU] or [dimensionless]
 
     # ---- Auxin ----
-    k_in: float = 1.0       # auxin input/import rate constant [1/TU]
-    d: float = 0.5          # auxin decay/degradation rate [1/TU]
-    D: float = 0.0          # diffusion coefficient along the file [LU^2/TU]
+    k_in: float = 1.0  # auxin input/import rate constant [1/TU]
+    d: float = 0.5  # auxin decay/degradation rate [1/TU]
+    D: float = 0.0  # diffusion coefficient along the file [LU^2/TU]
 
     # --- Growth (new) ---
-    growth_rate: float = 0.0          # dL/dt for each cell [LU/TU] (constant elongation per cell)
-    newborn_length: float = 1.0        # length assigned to newborn cells [LU]
-    tip_length_accum_rate: float = 1.0 # how fast new length is added at the tip [LU/TU]
+    growth_rate: float = (
+        0.0  # dL/dt for each cell [LU/TU] (constant elongation per cell)
+    )
+    newborn_length: float = 8.0  # length assigned to newborn cells [LU]
+    tip_length_accum_rate: float = (
+        1.0  # how fast new length is added at the tip [LU/TU]
+    )
+
+    # zonation boundary positions (distance from tip) [LU]
+    mz_end: float = 20 * 8  # 20 cells of average height 8um
+    tz_end: float = mz_end + 15 * 12  # 15 cells of average height 12um
+    ez_end: float = tz_end + 10 * 60  # 10 cells of average height 60um
+
+    # zone-specific target lengths [LU]
+    L_mz: float = 8.0  # um
+    L_tz: float = 12.0  # um
+    L_ez: float = 60.0  # um
+    L_dz: float = 100.0  # um
+
+    # zone-specific elongation rates [1/TU] if using relaxation-to-target
+    k_mz: float
+    k_tz: float
+    k_ez: float
+    k_dz: float
 
     def validate(self) -> None:
         """Raise ValueError if parameters are invalid."""
@@ -70,7 +91,9 @@ class Params:
 
         # If you rely on births to maintain a steady “conveyor”, you generally need some tip input
         if self.tip_length_accum_rate == 0 and self.growth_rate == 0:
-            raise ValueError("No growth: tip_length_accum_rate and growth_rate are both 0")
+            raise ValueError(
+                "No growth: tip_length_accum_rate and growth_rate are both 0"
+            )
 
         # Prevent pathological "tons of births per step" (optional but useful)
         tip_added = self.tip_length_accum_rate * self.dt
@@ -78,7 +101,7 @@ class Params:
             raise ValueError(
                 f"tip adds {tip_added:.3g} per step, which is >5 newborn lengths; "
                 "this will spawn many cells per step and may be unstable."
-        )
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize parameters to a JSON-friendly dict."""
@@ -92,8 +115,8 @@ def default_params() -> Params:
         dt=0.1,
         n_steps=400,
         n_cells=250,
-        oz_center = 50.0,
-        oz_sigma = 10.0,
+        oz_center=50.0,
+        oz_sigma=10.0,
         newborn_length=1.0,
         growth_rate=0.0,
         tip_length_accum_rate=0.2,

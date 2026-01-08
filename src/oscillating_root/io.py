@@ -60,7 +60,9 @@ def _to_jsonable(obj: Any) -> Any:
     return obj
 
 
-def save_params_json(run_dir: str | Path, p: Params, filename: str = "params.json") -> Path:
+def save_params_json(
+    run_dir: str | Path, p: Params, filename: str = "params.json"
+) -> Path:
     run_dir = Path(run_dir)
     outpath = run_dir / filename
     data = _to_jsonable(p)

@@ -26,10 +26,10 @@ class State:
     A_R: NDArray[np.float64]  # auxin amount in right file cells, shape (n_cells,) [AU]
 
     ids: NDArray[np.int64]  # persistent unique IDs, shape (n_cells,) [dimensionless]
-    next_id: int            # next unused ID for newborn cells [dimensionless]
+    next_id: int  # next unused ID for newborn cells [dimensionless]
 
-    L: NDArray[np.float64]          # cell length, shape (n_cells,) [LU]
-    tip_buffer: float              # accumulated length at tip not yet converted to a new cell [LU]
+    L: NDArray[np.float64]  # cell length, shape (n_cells,) [LU]
+    tip_buffer: float  # accumulated length at tip not yet converted to a new cell [LU]
 
     step_idx: int = 0  # integer step counter (0 at init) [dimensionless]
 
@@ -58,7 +58,17 @@ def init_state(p: Params) -> State:
     ids = np.arange(n, dtype=np.int64)
     next_id = int(n)
 
-    s = State(t=0.0, y=y, L=L, A_L=A_L, A_R=A_R, ids=ids, next_id=next_id, tip_buffer=0.0, step_idx=0)
+    s = State(
+        t=0.0,
+        y=y,
+        L=L,
+        A_L=A_L,
+        A_R=A_R,
+        ids=ids,
+        next_id=next_id,
+        tip_buffer=0.0,
+        step_idx=0,
+    )
     validate_state(s, p)
     return s
 
@@ -108,7 +118,9 @@ def validate_state(state: State, p: Params) -> None:
 
     # Ordering invariant (important for neighbor coupling later)
     if not np.all(np.diff(state.y) >= 0):
-        raise ValueError("y must be nondecreasing (cells indexed in increasing y order)")
+        raise ValueError(
+            "y must be nondecreasing (cells indexed in increasing y order)"
+        )
 
     # IDs: must be unique and nonnegative
     if np.any(state.ids < 0):

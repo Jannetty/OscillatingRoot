@@ -11,7 +11,12 @@ import numpy as np
 from oscillating_root.config import default_params, Params
 from oscillating_root.state import init_state
 from oscillating_root.model import step
-from oscillating_root.io import make_run_dir, save_frames_npz, save_metrics_json, save_params_json
+from oscillating_root.io import (
+    make_run_dir,
+    save_frames_npz,
+    save_metrics_json,
+    save_params_json,
+)
 from oscillating_root.metrics import compute_basic_metrics
 from oscillating_root.viz import (
     plot_kymograph,
@@ -20,17 +25,30 @@ from oscillating_root.viz import (
     compute_oz_residence_times,
     plot_residence_histogram,
     plot_cell_kymograph_eulerian_raster,
-    plot_cell_stack_snapshot
+    plot_cell_stack_snapshot,
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one OscillatingRoot simulation.")
-    parser.add_argument("--tag", type=str, default="NO_SIMTAG_SET", help="Run tag for output folder name")
-    parser.add_argument("--save-every", type=int, default=10, help="Save a frame every N steps")
-    parser.add_argument("--steps", type=int, default=None, help="Override n_steps from default params")
-    parser.add_argument("--dt", type=float, default=None, help="Override dt from default params")
-    parser.add_argument("--seed", type=int, default=None, help="Override seed from default params")
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default="NO_SIMTAG_SET",
+        help="Run tag for output folder name",
+    )
+    parser.add_argument(
+        "--save-every", type=int, default=10, help="Save a frame every N steps"
+    )
+    parser.add_argument(
+        "--steps", type=int, default=None, help="Override n_steps from default params"
+    )
+    parser.add_argument(
+        "--dt", type=float, default=None, help="Override dt from default params"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Override seed from default params"
+    )
     return parser.parse_args()
 
 
@@ -85,7 +103,7 @@ def main() -> None:
 
     frames = {
         "t": np.asarray(times, dtype=float),
-        "y": np.stack(ys, axis=0),          # (n_frames, n_cells)
+        "y": np.stack(ys, axis=0),  # (n_frames, n_cells)
         "L": np.stack(Ls, axis=0),
         "ids": np.stack(ids_list, axis=0),  # (n_frames, n_cells)
         "A_L": np.stack(A_Ls, axis=0),
@@ -104,8 +122,8 @@ def main() -> None:
     save_metrics_json(run_dir, metrics)
 
     # Plots
-    #plot_kymograph(frames["A_L"], run_dir / "kymograph_A_L.png", title="Auxin (Left file)", t=frames["t"])
-    #plot_kymograph(frames["A_R"], run_dir / "kymograph_A_R.png", title="Auxin (Right file)", t=frames["t"])
+    # plot_kymograph(frames["A_L"], run_dir / "kymograph_A_L.png", title="Auxin (Left file)", t=frames["t"])
+    # plot_kymograph(frames["A_R"], run_dir / "kymograph_A_R.png", title="Auxin (Right file)", t=frames["t"])
     plot_cell_kymograph_eulerian_raster(
         t=frames["t"],
         y_centers=frames["y"],

@@ -14,22 +14,44 @@ Core simulation update rule.
 - Truncation at far end to keep a fixed number of cells (n_cells).
 """
 
+
 def _recompute_centers_from_lengths(L: np.ndarray, tip_buffer: float) -> np.ndarray:
     """Given lengths and a tip offset (buffer), return cell center positions y [LU]."""
     edges = tip_buffer + np.concatenate(([0.0], np.cumsum(L)))
     return 0.5 * (edges[:-1] + edges[1:])
 
+
 def W_of_y(y: np.ndarray, p: Params) -> np.ndarray:
     """OZ window function W(y). For Milestone 2: simple box window in [center-sigma, center+sigma]."""
     if p.oz_sigma <= 0:
         return np.zeros_like(y, dtype=np.float64)
-    return ((y >= (p.oz_center - p.oz_sigma)) & (y <= (p.oz_center + p.oz_sigma))).astype(np.float64)
+    return (
+        (y >= (p.oz_center - p.oz_sigma)) & (y <= (p.oz_center + p.oz_sigma))
+    ).astype(np.float64)
+
 
 def S_of_t(t: float, p: Params) -> float:
     """Tip-tethered oscillatory driver S(t)."""
     if p.period_T <= 0:
         return float(p.S0)
     return float(p.S0 + p.S1 * np.sin(2.0 * np.pi * t / p.period_T))
+
+
+def zone_growth_targets(y, p):
+    # returns L_target per cell based on zone
+    Ltar = np.full_like(y, p.L_dz, dtype=float)
+    Ltar[y < p.ez_end] = p.L_ez
+    Ltar[y < p.tz_end] = p.L_tz
+    Ltar[y < p.mz_end] = p.L_mz
+    return Ltar
+
+
+def zone_rates(y, p):
+    k = np.full_like(y, p.k_dz, dtype=float)
+    k[y < p.ez_end] = p.k_ez
+    k[y < p.tz_end] = p.k_tz
+    k[y < p.mz_end] = p.k_mz
+    return k
 
 
 def _insert_one_cell_at_tip(state: State, p: Params) -> State:
@@ -93,7 +115,10 @@ def step(state: State, p: Params) -> State:
     t_next = state.t + p.dt
 
     # --- 1) grow lengths ---
-    L_new = state.L + p.growth_rate * p.dt
+    L_target = zone_growth_targets(state.y, p)
+    k = zone_rates(state.y, p)
+    L_new = state.L + p.dt * k * (L_target - state.L)
+    L_new = np.clip(L_new, 1e-6, None)
 
     # --- 2) accumulate tip material ---
     tip_buffer_new = state.tip_buffer + p.tip_length_accum_rate * p.dt
@@ -111,21 +136,16 @@ def step(state: State, p: Params) -> State:
     )
 
     # --- 3) insert newborns as long as enough tip material exists ---
+    tip_buffer = state.tip_buffer + p.tip_length_accum_rate * p.dt
+
+    # Insert as many newborns as you can "pay for"
     inserted = grown
-    while inserted.tip_buffer >= p.newborn_length:
-        # subtract material used to create one newborn
-        inserted = State(
-            t=inserted.t,
-            y=inserted.y,
-            L=inserted.L,
-            A_L=inserted.A_L,
-            A_R=inserted.A_R,
-            ids=inserted.ids,
-            next_id=inserted.next_id,
-            tip_buffer=inserted.tip_buffer - p.newborn_length,
-            step_idx=inserted.step_idx,
-        )
+    while tip_buffer >= p.newborn_length:
         inserted = _insert_one_cell_at_tip(inserted, p)
+        tip_buffer -= p.newborn_length
+
+    # Recompute centers from lengths and tip_buffer
+    y_new = _recompute_centers_from_lengths(inserted.L[: p.n_cells], tip_buffer)
 
     # --- 4) recompute y from lengths + tip buffer ---
     y_new = _recompute_centers_from_lengths(inserted.L, inserted.tip_buffer)
@@ -145,9 +165,9 @@ def step(state: State, p: Params) -> State:
     truncated = _truncate_to_n_cells(repositioned, p)
 
     # --- 6) OZ forcing + auxin update (uses updated y) ---
-    W = W_of_y(truncated.y, p)       # (n_cells,)
-    S = S_of_t(t_next, p)            # scalar
-    I = W * S                        # (n_cells,)
+    W = W_of_y(truncated.y, p)  # (n_cells,)
+    S = S_of_t(t_next, p)  # scalar
+    I = W * S  # (n_cells,)
 
     A_L_new = truncated.A_L + p.dt * (p.k_in * I - p.d * truncated.A_L)
     A_R_new = truncated.A_R + p.dt * (p.k_in * I - p.d * truncated.A_R)

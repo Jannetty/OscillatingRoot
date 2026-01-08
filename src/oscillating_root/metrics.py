@@ -51,22 +51,22 @@ def compute_basic_metrics(frames: Dict[str, np.ndarray], p: Params) -> Dict[str,
 
     metrics: Dict[str, Any] = {
         # ---- Run metadata ----
-        "n_steps": int(p.n_steps),         # number of integration steps requested [dimensionless]
-        "dt": float(p.dt),                 # timestep size [TU]
-        "seed": int(p.seed),               # RNG seed [dimensionless]
-        "n_cells": int(p.n_cells),         # cells per file [dimensionless]
-        "n_frames": int(t.shape[0]),       # number of saved frames [dimensionless]
-        "t_final": float(t[-1]),           # final saved time [TU]
-
+        "n_steps": int(
+            p.n_steps
+        ),  # number of integration steps requested [dimensionless]
+        "dt": float(p.dt),  # timestep size [TU]
+        "seed": int(p.seed),  # RNG seed [dimensionless]
+        "n_cells": int(p.n_cells),  # cells per file [dimensionless]
+        "n_frames": int(t.shape[0]),  # number of saved frames [dimensionless]
+        "t_final": float(t[-1]),  # final saved time [TU]
         # ---- Auxin statistics: Left file ----
-        "A_L_min": float(np.min(A_L)),     # min auxin amount over all frames/cells [AU]
-        "A_L_max": float(np.max(A_L)),     # max auxin amount over all frames/cells [AU]
-        "A_L_mean": float(np.mean(A_L)),   # mean auxin amount over all frames/cells [AU]
-
+        "A_L_min": float(np.min(A_L)),  # min auxin amount over all frames/cells [AU]
+        "A_L_max": float(np.max(A_L)),  # max auxin amount over all frames/cells [AU]
+        "A_L_mean": float(np.mean(A_L)),  # mean auxin amount over all frames/cells [AU]
         # ---- Auxin statistics: Right file ----
-        "A_R_min": float(np.min(A_R)),     # [AU]
-        "A_R_max": float(np.max(A_R)),     # [AU]
-        "A_R_mean": float(np.mean(A_R)),   # [AU]
+        "A_R_min": float(np.min(A_R)),  # [AU]
+        "A_R_max": float(np.max(A_R)),  # [AU]
+        "A_R_mean": float(np.mean(A_R)),  # [AU]
     }
 
     return metrics

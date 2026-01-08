@@ -32,7 +32,9 @@ def plot_cell_kymograph_eulerian_raster(
     if y_centers.ndim != 2 or A.ndim != 2:
         raise ValueError("y_centers and A must be 2D (n_frames, n_cells)")
     if y_centers.shape != A.shape:
-        raise ValueError(f"y_centers and A must match, got {y_centers.shape} vs {A.shape}")
+        raise ValueError(
+            f"y_centers and A must match, got {y_centers.shape} vs {A.shape}"
+        )
     if y_centers.shape[0] != t.shape[0]:
         raise ValueError("t length must match number of frames")
 
@@ -42,7 +44,9 @@ def plot_cell_kymograph_eulerian_raster(
         L = np.full_like(y_centers, float(default_cell_length), dtype=float)
     else:
         if cell_lengths.shape != y_centers.shape:
-            raise ValueError(f"cell_lengths must match y_centers shape, got {cell_lengths.shape}")
+            raise ValueError(
+                f"cell_lengths must match y_centers shape, got {cell_lengths.shape}"
+            )
         L = cell_lengths.astype(float)
 
     if y_max is None:
@@ -104,6 +108,7 @@ def plot_cell_kymograph_eulerian_raster(
     plt.close(fig)
     return outpath
 
+
 def plot_cell_stack_snapshot(
     y_centers: np.ndarray,
     L: np.ndarray,
@@ -142,6 +147,7 @@ def plot_cell_stack_snapshot(
     fig.savefig(outpath, dpi=200)
     plt.close(fig)
     return outpath
+
 
 def plot_kymograph(
     A: np.ndarray,
@@ -237,6 +243,7 @@ def plot_final_state(
     plt.close(fig)
     return outpath
 
+
 def plot_id_trajectories(
     t: np.ndarray,
     y: np.ndarray,
@@ -265,15 +272,17 @@ def plot_id_trajectories(
     if y.ndim != 2 or ids.ndim != 2:
         raise ValueError("y and ids must be 2D (n_frames, n_cells)")
     if y.shape != ids.shape:
-        raise ValueError(f"y and ids must have same shape, got {y.shape} vs {ids.shape}")
+        raise ValueError(
+            f"y and ids must have same shape, got {y.shape} vs {ids.shape}"
+        )
     if y.shape[0] != t.shape[0]:
         raise ValueError("t length must match number of frames")
 
     # Choose IDs to track from the final frame (these exist at the end)
     final_ids = np.sort(ids[-1].astype(np.int64))
-    track_ids = final_ids[:n_tracks]          # oldest remaining
+    track_ids = final_ids[:n_tracks]  # oldest remaining
     # or:
-    #track_ids = final_ids[-n_tracks:]         # youngest remaining
+    # track_ids = final_ids[-n_tracks:]         # youngest remaining
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -356,8 +365,13 @@ def plot_residence_histogram(
     ax = fig.add_subplot(111)
 
     if residence_times.size == 0:
-        ax.text(0.5, 0.5, "No residence times computed\n(set oz_sigma > 0 and run long enough)",
-                ha="center", va="center")
+        ax.text(
+            0.5,
+            0.5,
+            "No residence times computed\n(set oz_sigma > 0 and run long enough)",
+            ha="center",
+            va="center",
+        )
         ax.set_axis_off()
     else:
         ax.hist(residence_times, bins=30)
