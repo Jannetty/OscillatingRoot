@@ -20,14 +20,12 @@ class State:
     Interpretation:
       - y[i] is the *center position* of cell i along the root axis [µm].
       - L[i] is the *cell height/length* along y for cell i [µm].
-      - A_L[i], A_R[i] are auxin *concentrations* (or concentration-like scalars) [AU].
+      - A_L[i], A_R[i] are auxin *amounts* per cell [AU] (concentration can be computed as C = A / L).
         We keep two arrays because you model two files (left/right) with identical geometry.
       - ids[i] is a persistent unique identifier for the lineage of the cell currently occupying slot i.
         IDs move with cells as they shift shootward; indices do *not* persist.
       - tau_grow[i] is the remaining time [hours] until the next discrete growth event for cell i.
         When tau_grow[i] <= 0, the cell grows by +dy and tau_grow[i] is rescheduled.
-      - tip_buffer is accumulated length at the tip [µm] not yet converted into a new newborn cell
-        (only used if Params.use_tip_births=True).
     """
 
     t: float  # current time [hours]
@@ -35,14 +33,23 @@ class State:
     L: NDArray[np.float64]  # cell lengths/heights [µm], shape (n_cells,)
 
     A_L: NDArray[np.float64]  # auxin concentration in left file cells, shape (n_cells,)
+    J_prev_L: NDArray[np.float64]  # shape (n_cells-1,) for auxin flux hypotheses
+    J_prev_R: NDArray[np.float64]  # shape (n_cells-1,) for auxin flux hypotheses
     A_R: NDArray[
         np.float64
     ]  # auxin concentration in right file cells, shape (n_cells,)
 
+    pin_rfrac: NDArray[np.float64]  # shape (n_cells,), values in [0,1]
+    W_L: NDArray[
+        np.float64
+    ]  # shape (n_cells-1,) wall amount between i and i+1 (left file)
+    W_R: NDArray[
+        np.float64
+    ]  # shape (n_cells-1,) wall amount between i and i+1 (right file)
+
     ids: NDArray[np.int64]  # persistent unique cell IDs, shape (n_cells,)
     next_id: int  # next unused ID for newly created cells
 
-    tip_buffer: float  # tip length reservoir [µm] (optional; see Params.use_tip_births)
     tau_grow: NDArray[np.float64]  # time-to-next-growth-event [hours], shape (n_cells,)
 
     step_idx: int = 0  # integer step counter
@@ -55,16 +62,22 @@ def init_state(p: Params) -> State:
     # initial lengths/heights
     L = np.full(n, p.newborn_length, dtype=np.float64)
 
-    # centers from lengths (tip_buffer = 0 at init)
+    # centers from lengths
     edges = np.concatenate(([0.0], np.cumsum(L)))
     y = 0.5 * (edges[:-1] + edges[1:])
 
     A_L = np.zeros(n, dtype=np.float64)
     A_R = np.zeros(n, dtype=np.float64)
 
+    pin_rfrac = np.full(n, 0.5, dtype=np.float64)  # or zone defaults; see helper below
+    W_L = np.zeros(n - 1, dtype=np.float64)
+    W_R = np.zeros(n - 1, dtype=np.float64)
+
+    J_prev_L = np.zeros(n - 1, dtype=np.float64)
+    J_prev_R = np.zeros(n - 1, dtype=np.float64)
+
     ids = np.arange(n, dtype=np.int64)
     next_id = int(n)
-    tip_buffer = 0.0
 
     # schedule initial growth timers
     r = zone_r(y, p)  # (n,)
@@ -77,10 +90,14 @@ def init_state(p: Params) -> State:
         y=y,
         L=L,
         A_L=A_L,
+        J_prev_L=J_prev_L,
+        J_prev_R=J_prev_R,
         A_R=A_R,
+        pin_rfrac=pin_rfrac,
+        W_L=W_L,
+        W_R=W_R,
         ids=ids,
         next_id=next_id,
-        tip_buffer=tip_buffer,
         tau_grow=tau_grow,
         step_idx=0,
     )
@@ -103,6 +120,10 @@ def validate_state(state: State, p: Params) -> None:
         raise ValueError(f"ids must have shape {(n,)}, got {state.ids.shape}")
     if state.tau_grow.shape != (n,):
         raise ValueError(f"tau_grow must have shape {(n,)}, got {state.tau_grow.shape}")
+    if state.J_prev_L.shape != (n - 1,) or state.J_prev_R.shape != (n - 1,):
+        raise ValueError(
+            f"J_prev_L/R must have shape {(n-1,)}, got {state.J_prev_L.shape}, {state.J_prev_R.shape}"
+        )
 
     if not np.isfinite(state.t):
         raise ValueError("t must be finite")
@@ -121,13 +142,9 @@ def validate_state(state: State, p: Params) -> None:
     finite_tau = np.isfinite(state.tau_grow)
     if np.any(state.tau_grow[finite_tau] < 0):
         raise ValueError("finite tau_grow must be >= 0 in stored state")
-    if not np.isfinite(state.tip_buffer):
-        raise ValueError("tip_buffer must be finite")
 
     if np.any(state.L <= 0):
         raise ValueError("All L must be > 0")
-    if state.tip_buffer < 0:
-        raise ValueError("tip_buffer must be >= 0")
     if np.any(state.tau_grow < 0):
         # allowed transiently inside step, but state should store nonnegative
         raise ValueError("tau_grow must be >= 0 in stored state")
@@ -143,17 +160,7 @@ def validate_state(state: State, p: Params) -> None:
         raise ValueError("next_id must be >= 0")
     if state.step_idx < 0:
         raise ValueError("step_idx must be >= 0")
-
-    # Geometry consistency: y should be centers implied by L and tip_buffer
-    y_expected = 0.5 * (
-        (state.tip_buffer + np.concatenate(([0.0], np.cumsum(state.L))))[:-1]
-        + (state.tip_buffer + np.concatenate(([0.0], np.cumsum(state.L))))[1:]
-    )
-    if not np.allclose(state.y, y_expected, rtol=0, atol=1e-9):
-        raise ValueError(
-            "y is inconsistent with L and tip_buffer (did you forget to recompute centers?)"
-        )
-    if np.any(state.ids >= state.next_id):
-        raise ValueError(
-            "Found id >= next_id (next_id should always exceed all existing ids)"
-        )
+    if state.pin_rfrac.shape != (n,):
+        raise ValueError(...)
+    if state.W_L.shape != (n - 1,) or state.W_R.shape != (n - 1,):
+        raise ValueError(...)

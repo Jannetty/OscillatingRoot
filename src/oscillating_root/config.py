@@ -6,7 +6,7 @@ from typing import Any, Dict
 # ---- Unit conventions (documentation constants) ----
 TU: str = "hours"
 LU: str = "microns"
-AU: str = "auxin concentration (arbitrary units)"
+AU: str = "auxin amount (arbitrary units)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,8 +17,8 @@ class Params:
     Units:
       - Time unit (TU): hours
       - Length unit (LU): microns (µm)
-      - Auxin unit (AU): treated as a *concentration-like* scalar per cell
-                         (i.e., dilution is meaningful when cell length increases).
+      - Auxin unit (AU): treated as a *amount-like* scalar per cell
+                         (Concentration can be computed as C = A / L.)
 
     Geometry / indexing convention:
       - We model one 1D "file" of cells stacked along y (tip at y=0, shootward is +y).
@@ -32,22 +32,64 @@ class Params:
     n_steps: int = 100  # number of update steps
     n_cells: int = 250  # fixed number of cells stored per file
 
-    # ---- Oscillation Zone (OZ) forcing window along y ----
-    oz_center: float = 50.0  # OZ center position [µm from tip]
-    oz_sigma: float = 10.0  # OZ half-width for box window [µm]
+    # ---- Loading Zone (OZ) loading window along y ----
+    loading_center: float = 50.0  # Loading zone center position [µm from tip]
+    loading_sigma: float = 20.0  # Loading zone half-width for box window [µm]
     # (currently: W(y)=1 in [center-sigma, center+sigma])
 
-    # ---- Temporal forcing S(t) applied inside OZ ----
-    period_T: float = 10.0  # forcing period [hours]; if <=0, forcing is constant
-    S0: float = 1.0  # baseline forcing amplitude (offset) [AU-like]
-    S1: float = 1.0  # oscillation amplitude [AU-like]
-    # S(t) = S0 + S1*sin(2π t / T)
+    # ---- Loading depends on cell size (emergent priming) ----
+    gamma_load: float = 1.0  # exponent for size-dependent loading
+    L0_load: float = 8.0  # reference length [µm] (e.g. newborn_length)
+    cap_load: float | None = (
+        None  # optional cap on (L/L0)^gamma to prevent huge cells dominating
+    )
 
-    # ---- Auxin dynamics (treat A as concentration) ----
-    k_in: float = 1.0  # auxin input rate coefficient [1/hour] (effective)
-    # (A increases in OZ as k_in * I, where I=W(y)*S(t))
-    d: float = 0.05  # auxin degradation rate [1/hour]
-    D: float = 100.0  # diffusion coefficient along file [µm^2/hour]
+    # ---- Auxin dynamics (treat A as amount) ----
+    # ---- Transporter / transport model toggles ----
+    use_apoplast: bool = (
+        True  # run with interface wall compartments or direct cell-cell
+    )
+
+    k_in: float = (
+        5.0  # external loading rate into cytoplasm (OZ supply). Set 0 to disable.
+    )
+    d: float = 0.005  # first-order auxin loss/turnover rate
+
+    pin_rule: str = "C"  # "A" gradient-sensing, "B" flux-reinforcement, "C" zone-fixed
+    pin_relax_tau: float = 1.0  # [hr] relaxation timescale for pin_rfrac dynamics
+    pin_beta: float = 5.0  # sensitivity for A and/or B (sigmoid steepness)
+
+    # ---- AUX/LAX (import) regulation ----
+    aux_alpha: float = 2.0  # fold-upreg strength
+    aux_K: float = 0.5  # [conc units] half-saturation (in terms of C=A/L)
+
+    # ---- Baseline expression profiles (piecewise by zone) ----
+    pin_tot_mz: float = 1.0
+    pin_tot_tz: float = 1.0
+    pin_tot_ez: float = 0.5
+    pin_tot_dz: float = 0.1
+
+    aux_base_mz: float = 0.5
+    aux_base_tz: float = 0.5
+    aux_base_ez: float = 0.2
+    aux_base_dz: float = 0.1
+
+    # ---- Zone-fixed polarity for rule C ----
+    pin_rfrac_mz: float = 0.3
+    pin_rfrac_tz: float = 0.3
+    pin_rfrac_ez: float = 0.3
+    pin_rfrac_dz: float = 0.3
+
+    # ---- Kinetics ----
+    k_pin: float = 1.0  # export rate coefficient
+    k_aux: float = 1.0  # import rate coefficient (only used if use_apoplast=True)
+
+    # ---- Optional passive diffusion (can set to 0 to isolate transporters) ----
+    D_cell: float = 0.0  # effective passive diffusion in cytoplasm (no apoplast mode)
+    D_wall: float = 0.0  # diffusion along wall (apoplast mode)
+
+    # ---- Apoplast "volume" scale for converting wall amount to wall concentration ----
+    V_wall: float = 1.0
 
     # ---- Discrete growth algorithm (paper-like grid growth) ----
     dy: float = 2.0  # growth increment per event [µm]
@@ -78,14 +120,6 @@ class Params:
         144.0  # max height cap in EZ [µm]; once reached, cell stops growing (DZ-like)
     )
 
-    # ---- Optional tip births (NOT in the paper) ----
-    # This is a debugging / inflow mechanism to maintain n_cells if division is disabled,
-    # or to mimic adding new cells at the tip independent of division.
-    use_tip_births: bool = False
-    tip_length_accum_rate: float = (
-        0.0  # [µm/hour] length accumulated at the tip; converted into newborns
-    )
-
     def validate(self) -> None:
         if self.dt <= 0:
             raise ValueError(f"dt must be > 0, got {self.dt}")
@@ -113,16 +147,12 @@ class Params:
         if self.division_rule == "fixed" and self.Hdivision <= self.newborn_length:
             raise ValueError("Hdivision must be > newborn_length for fixed division")
 
-        if self.use_tip_births:
-            if self.tip_length_accum_rate <= 0:
-                raise ValueError(
-                    "tip_length_accum_rate must be > 0 when use_tip_births=True"
-                )
-            # prevent “tons of births per step”
-            if self.tip_length_accum_rate * self.dt > 5 * self.newborn_length:
-                raise ValueError(
-                    "tip births too fast for dt; will spawn many cells per step"
-                )
+        if self.pin_rule not in ("A", "B", "C"):
+            raise ValueError("pin_rule must be 'A','B', or 'C'")
+        if self.pin_relax_tau <= 0:
+            raise ValueError("pin_relax_tau must be > 0")
+        if self.use_apoplast and self.k_aux < 0:
+            raise ValueError("k_aux must be >= 0")
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -134,12 +164,9 @@ def default_params() -> Params:
         dt=0.1,
         n_steps=400,
         n_cells=250,
-        oz_center=50.0,
-        oz_sigma=10.0,
+        loading_center=50.0,
         newborn_length=8.0,
         division_rule="double",
-        use_tip_births=False,
-        tip_length_accum_rate=0.0,
     )
     p.validate()
     return p

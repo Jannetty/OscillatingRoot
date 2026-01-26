@@ -127,7 +127,7 @@ def main() -> None:
     plot_cell_kymograph_eulerian_raster(
         t=frames["t"],
         y_centers=frames["y"],
-        A=frames["A_L"],
+        A=frames["A_L"] / np.maximum(frames["L"], 1e-12),  # concentration
         cell_lengths=frames["L"],
         outpath=run_dir / "kymograph_cells_A_L.png",
         dy=1.0,
@@ -137,7 +137,7 @@ def main() -> None:
     plot_cell_kymograph_eulerian_raster(
         t=frames["t"],
         y_centers=frames["y"],
-        A=frames["A_R"],
+        A=frames["A_L"] / np.maximum(frames["L"], 1e-12),  # concentration
         cell_lengths=frames["L"],
         outpath=run_dir / "kymograph_cells_A_R.png",
         dy=1.0,
@@ -165,8 +165,8 @@ def main() -> None:
         t=frames["t"],
         y=frames["y"],
         ids=frames["ids"],
-        oz_center=p.oz_center,
-        oz_sigma=p.oz_sigma,
+        oz_center=p.loading_center,
+        oz_sigma=p.loading_sigma,
     )
     plot_residence_histogram(res, run_dir / "oz_residence_hist.png")
 
