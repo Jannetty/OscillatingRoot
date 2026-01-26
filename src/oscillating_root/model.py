@@ -149,6 +149,53 @@ def _insert_newborn_at_tip(
     )
 
 
+def _diffuse_1d_centers(
+    A: np.ndarray, y: np.ndarray, D: float, dt: float
+) -> np.ndarray:
+    """
+    Diffusion along the 1D cell file using center distances.
+
+    Parameters
+    ----------
+    A : (n,) array
+        Per-cell concentration.
+    y : (n,) array
+        Cell center positions (nondecreasing).
+    D : float
+        Diffusion coefficient [µm^2/hr] (effective).
+    dt : float
+        Timestep [hr].
+
+    Returns
+    -------
+    A_new : (n,) array
+        Concentrations after an explicit diffusion step.
+    """
+    n = A.size
+    if D <= 0.0 or n < 3:
+        return A
+
+    # neighbor distances
+    d_plus = y[1:] - y[:-1]  # (n-1,)
+    d_plus = np.clip(d_plus, 1e-9, None)
+
+    # fluxes at interfaces i+1/2, positive means flow to the right
+    J = -D * (A[1:] - A[:-1]) / d_plus  # (n-1,)
+
+    # divergence of flux; use a local length scale to keep units sensible
+    A_new = A.copy()
+    for i in range(1, n - 1):
+        dL = d_plus[i - 1]
+        dR = d_plus[i]
+        vol_scale = 0.5 * (dL + dR)  # local "cell height" along axis
+        A_new[i] += dt * (J[i - 1] - J[i]) / vol_scale
+
+    # No-flux boundary conditions (Neumann): effectively J at ends = 0
+    # (A_new[0], A_new[-1] unchanged)
+
+    return A_new
+
+
 def step(state: State, p: Params) -> State:
     """
     VDB Paper-like growth + division (1D abstraction).
@@ -348,6 +395,13 @@ def step(state: State, p: Params) -> State:
     A_L = A_L + p.dt * (p.k_in * I - p.d * A_L)
     A_R = A_R + p.dt * (p.k_in * I - p.d * A_R)
 
+    A_L = _diffuse_1d_centers(A_L, y, p.D, p.dt)
+    A_R = _diffuse_1d_centers(A_R, y, p.D, p.dt)
+
+    # ensure stored finite taus are nonnegative (numerical safety)
+    finite = np.isfinite(tau)
+    tau[finite] = np.maximum(tau[finite], 0.0)
+
     new_state = State(
         t=t_next,
         y=y.astype(np.float64),
@@ -360,8 +414,5 @@ def step(state: State, p: Params) -> State:
         tau_grow=tau.astype(np.float64),
         step_idx=state.step_idx + 1,
     )
-    # ensure stored finite taus are nonnegative (numerical safety)
-    finite = np.isfinite(tau)
-    tau[finite] = np.maximum(tau[finite], 0.0)
     validate_state(new_state, p)
     return new_state

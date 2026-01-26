@@ -46,8 +46,8 @@ class Params:
     # ---- Auxin dynamics (treat A as concentration) ----
     k_in: float = 1.0  # auxin input rate coefficient [1/hour] (effective)
     # (A increases in OZ as k_in * I, where I=W(y)*S(t))
-    d: float = 0.5  # auxin degradation rate [1/hour]
-    D: float = 0.0  # diffusion coefficient along file [µm^2/hour] (unused for now)
+    d: float = 0.05  # auxin degradation rate [1/hour]
+    D: float = 100.0  # diffusion coefficient along file [µm^2/hour]
 
     # ---- Discrete growth algorithm (paper-like grid growth) ----
     dy: float = 2.0  # growth increment per event [µm]
